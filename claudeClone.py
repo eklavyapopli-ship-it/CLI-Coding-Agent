@@ -1,5 +1,4 @@
-# manual COT
-import requests
+
 from openai import OpenAI
 import json
 from pydantic import BaseModel, Field
@@ -8,16 +7,10 @@ from typing import Optional
 from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(
-    api_key= os.getenv('GROQ_API_KEY'),
-    base_url= "https://api.groq.com/openai/v1"
+    api_key= os.getenv('GEMINI_API_KEY'),
+    base_url= "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
-def weatherget(city:str):
-    url = f"https://wttr.in/{city.lower()}?format=%C%t"
-    responseWeather = requests.get(url)
-
-    if responseWeather.status_code == 200:
-        return f"the weather in {city} is {responseWeather.text}"
     
 def run_cmd(cmd:str):
     result = os.system(cmd)
@@ -25,7 +18,6 @@ def run_cmd(cmd:str):
 
 
 available_tools = {
-    "weatherget" : weatherget,
     "run_cmd" : run_cmd
 }
 
@@ -40,8 +32,7 @@ For every tool call, wait for the OBSERVE step which is the output from the call
 
 Rules:
 - Strictly follow the given JSON format.
-- Only run 1 step at a time.
-- The sequence of a step is START( where user gives an input ), PLAN (That can be multiple times) and finally OUTPUT which is going to be displayed to the user.
+- The sequence of a step is START( where user gives an input ), PLAN (That can be multiple times), TOOL, OBSERVE finally OUTPUT which is going to be displayed to the user.
 - you can also call a tool if required from the list of available tools
 You are an expert AI assistant that solves problems using
 EXPLICIT STEP EXECUTION.
@@ -82,29 +73,21 @@ JSON FORMAT:
 Workflow:
 1. First response MUST be START
 2. Then multiple PLAN responses (one step at a time)
-3. End with OUTPUT only when fully solved
+3. Tools to be called if any
+4. End with OUTPUT only when fully solved
 
 OUTPUT JSON FORMAT:
 {"step": "START" | "PLAN" | "OUTPUT" , "content" : "string"}
 
 Available Tools:
-- weatherget(city: str) : Takes city name as an input string and returns the weather information about the city
 - run_cmd(cmd:str) : Takes a system linux command as string and executes the command on user's system and returns the output from that command
-Example 1:
-user query: Can you solve 2+3*5/10?
-START: {"step":"START" , "content" : "Seems like user is interested in maths problem" }
-PLAN: {"step":"PLAN" , "content" : "Looking at the problem, we should solve this using BODMAS method" }
-PLAN: {"step":"PLAN" , "content" : "Yes, The BODMAS is correct thing done here" }
-PLAN: {"step":"PLAN" , "content" : "First we should multiply 3*5 which is 15" }
-PLAN: {"step":"PLAN" , "content" : "Now the new equation is 2+15/10" }
-PLAN: {"step":"PLAN" , "content" : "We must perform divide on 15/10 which is 1.5" }
-PLAN: {"step":"PLAN" , "content" : "Now the new equation is 2+1.5" }
-PLAN: {"step":"PLAN" , "content" : "We must perform addition on 2+1.5 which is 3.5" }
-PLAN: {"step":"PLAN" , "content" : "Great, we has solved and finally left with 3.5 as ans" }
-OUTPUT: {"step":"OUTPUT", "content": "3.5"}
+-- def run_cmd(cmd:str):
+    result = os.system(cmd)
+    return result
 
 
-Example 2:
+
+Example :
 user query: What is the weather of delhi?
 START: {"step":"START": , "content" : "Seems like user is interested in getting the weather of delhi in India" }
 PLAN: {"step":"PLAN":  "content" : "Lets see if we have any available tool from the list of available tools" }
@@ -123,7 +106,7 @@ RESPONSE SEQUENCE:
 4. OUTPUT
 The above sequence should be STRICTLY FOLLOWED
 Until and unless 1 state is not over, you should not move to another state without giving the OUTPUT step
-
+PLEASE FOLLOW THE ABOVE SEQUENCE ONLY
 '''
 
 
@@ -135,18 +118,22 @@ class LLM_OUTPUT(BaseModel):
 
 
 print("\n\n\n")
+
 message_history = [
       {"role":"system", "content": SYSTEM_PROMPT} 
 ]
+def takeQuery():
 
-user_query = input(">> ")
-message_history.append({"role":"user", "content": user_query})
+    user_query = input(">> ")
+    message_history.append({"role":"user", "content": user_query})
 
-
-
+takeQuery()
 while True:
+    
+
+    
     response = client.chat.completions.create(
-        model="groq/compound",
+        model="gemini-2.5-flash",
         response_format={
         "type": "json_object"
     },
@@ -155,11 +142,7 @@ while True:
     )
     raw_content = response.choices[0].message.content
     parsed_response = json.loads(raw_content)
-
-# Optional: validate with Pydantic
     validated = LLM_OUTPUT(**parsed_response)
-
-    # save assistant response
     message_history.append({
         "role": "assistant",
         "content": raw_content
@@ -170,19 +153,9 @@ while True:
     if validated.step == "START":
         print("START:", validated.content)
 
-        # ask model to continue
-        message_history.append({
-            "role": "user",
-            "content": "Continue to the next step."
-        })
-
     if validated.step == "PLAN":
         print("PLAN:", validated.content)
 
-        message_history.append({
-            "role": "user",
-            "content": "Continue to the next step."
-        })
 
     if validated.step == "TOOL":
         tool_name = validated.tool
@@ -190,8 +163,6 @@ while True:
 
         tool_output = available_tools[tool_name](tool_input)
         print(f"TOOL CALL: {tool_name}({tool_input}) → {tool_output}")
-
-        # OBSERVE must be injected as USER or SYSTEM (NOT developer)
         message_history.append({
             "role": "user",
             "content": json.dumps({
@@ -205,10 +176,7 @@ while True:
     elif validated.step == "OUTPUT":
         print("OUTPUT:", validated.content)
         break
-    message_history.append({
-        "role": "user",
-        "content": "Continue with the next step."
-    })
+        
 
 
 
